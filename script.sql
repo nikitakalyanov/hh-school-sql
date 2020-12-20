@@ -2,43 +2,43 @@
 
 CREATE TABLE areas
 (
-    id	  serial  PRIMARY KEY,
+    id    serial  PRIMARY KEY,
     name  text
 );
 
 CREATE TABLE employers
 (
-    id 	     serial   PRIMARY KEY,
-    name     text     NOT NULL,
-    area_id	 integer  NOT NULL REFERENCES areas (id)
+    id        serial   PRIMARY KEY,
+    name      text     NOT NULL,
+    area_id   integer  NOT NULL REFERENCES areas (id)
 );
 
 CREATE TABLE vacancies
 (
-    id	                serial 	   PRIMARY KEY,
-    employer_id	        integer	   NOT NULL REFERENCES employers (id),
-    position_name	    text	   NOT NULL,
-    compensation_from   integer,
-    compensation_to	    integer,
-    compensation_gross  boolean,
-    created_at		    timestamp  NOT NULL DEFAULT NOW(),
-    updated_at		    timestamp  NOT NULL DEFAULT NOW(),
-    deleted		        boolean    NOT NULL DEFAULT FALSE,
-    deleted_at		    timestamp
+    id                   serial      PRIMARY KEY,
+    employer_id          integer     NOT NULL REFERENCES employers (id),
+    position_name        text     NOT NULL,
+    compensation_from    integer,
+    compensation_to      integer,
+    compensation_gross   boolean,
+    created_at           timestamp  NOT NULL DEFAULT NOW(),
+    updated_at           timestamp  NOT NULL DEFAULT NOW(),
+    deleted              boolean    NOT NULL DEFAULT FALSE,
+    deleted_at           timestamp
 );
 
 CREATE TABLE cvs (
-    id	     serial  PRIMARY KEY,
+    id       serial  PRIMARY KEY,
     content  jsonb   NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE job_applications
 (
-    id	        serial     PRIMARY KEY,
+    id          serial     PRIMARY KEY,
     cv_id       integer    NOT NULL REFERENCES cvs (id),
     vacancy_id  integer    NOT NULL references vacancies (id),
-    created_at	timestamp  NOT NULL DEFAULT NOW(),
-    updated_at	timestamp  NOT NULL DEFAULT NOW(),
+    created_at  timestamp  NOT NULL DEFAULT NOW(),
+    updated_at  timestamp  NOT NULL DEFAULT NOW(),
     UNIQUE (cv_id, vacancy_id)
 );
 
@@ -139,50 +139,49 @@ SELECT
 FROM vacancies v
 INNER JOIN employers e ON v.employer_id = e.id
 INNER JOIN areas a ON e.area_id = a.id
-WHERE v.compensation_from IS NULL and v.compensation_to IS NULL
+WHERE v.compensation_from IS NULL AND v.compensation_to IS NULL
 ORDER BY created_at DESC
 LIMIT 10;
 
 -- 4
--- get the 2 averages (one average for gross compensations and one average for net compensations) and remember their corresponding N's
-WITH gross_net_avgs AS (
+WITH gross_compensations AS (
     SELECT
-        AVG(compensation_from) AS min_avg,
-        AVG(compensation_to) AS max_avg,
-        AVG((compensation_to + compensation_from)/2) AS avg_avg,
-        COUNT(compensation_from) AS from_n,
-        COUNT(compensation_to) AS to_n,
-        COUNT(compensation_to + compensation_from) AS to_from_n
+        CASE
+            WHEN compensation_gross IS TRUE
+            THEN compensation_to
+            ELSE compensation_to / 0.87
+            END AS compensation_to,
+        CASE
+           WHEN compensation_gross IS TRUE
+           THEN compensation_from
+           ELSE compensation_from / 0.87
+           END AS compensation_from
     FROM vacancies
-    WHERE compensation_gross IS TRUE
-    UNION
-    SELECT
-        AVG(compensation_from/0.87) AS min_avg,
-        AVG(compensation_to/0.87) AS max_avg,
-        AVG((compensation_to + compensation_from)/2) AS avg_avg,
-        COUNT(compensation_from) AS from_n,
-        COUNT(compensation_to) AS to_n,
-        COUNT(compensation_to + compensation_from) AS to_from_n
-    FROM vacancies
-    WHERE compensation_gross IS FALSE
 )
--- here we reconstruct back the overall average using the 2 averages of two groups
 SELECT
-    SUM(min_avg*from_n)/SUM(from_n) AS min_avg,
-    SUM(max_avg*to_n)/SUM(to_n) AS max_avg,
-    SUM(avg_avg*to_from_n)/SUM(to_from_n) AS avg_avg
-FROM gross_net_avgs;
+    AVG(compensation_from) AS min_avg,
+    AVG(compensation_to) AS max_avg,
+    AVG((compensation_to + compensation_from)/2) AS avg_avg
+FROM gross_compensations;
 
 -- 5
-WITH employer_applications AS (
+WITH applications_for_vacancy AS (
     SELECT
-        e.name AS name,
+        appl.vacancy_id AS vacancy_id,
         COUNT(*) AS n_applications
     FROM job_applications appl
+    GROUP BY appl.vacancy_id
+),
+employer_applications AS (
+    SELECT
+        e.name AS name,
+        AVG(a_for_v.n_applications) as avg_applications
+    FROM job_applications appl
     INNER JOIN vacancies v ON v.id = appl.vacancy_id
+    INNER JOIN applications_for_vacancy a_for_v ON v.id = a_for_v.vacancy_id
     INNER JOIN employers e ON e.id = v.employer_id
     GROUP BY v.employer_id, e.name
-    ORDER BY n_applications DESC, name
+    ORDER BY avg_applications DESC, name
 )
 SELECT
     name
@@ -201,12 +200,19 @@ SELECT
 FROM n_vacancies;
 
 -- 7
+WITH vacancies_and_first_appl AS (
+    SELECT
+        v.created_at AS vacancy_published,
+        MIN(appl.created_at) OVER (PARTITION BY v.id) AS first_appl,
+        a.name AS city_name
+    FROM job_applications appl
+    INNER JOIN vacancies v ON v.id = appl.vacancy_id
+    INNER JOIN employers e ON v.employer_id = e.id
+    INNER JOIN areas a ON a.id = e.area_id
+)
 SELECT
-    MIN(appl.created_at - v.created_at) AS min_time,
-    MAX(appl.created_at - v.created_at) AS max_time,
-    a.name AS city_name
-FROM job_applications appl
-INNER JOIN vacancies v ON v.id = appl.vacancy_id
-INNER JOIN employers e ON v.employer_id = e.id
-INNER JOIN areas a ON a.id = e.area_id
-GROUP BY a.name;
+    MIN(first_appl - vacancy_published) AS min_time,
+    MAX(first_appl - vacancy_published) AS max_time,
+    city_name
+FROM vacancies_and_first_appl
+GROUP BY city_name;
