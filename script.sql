@@ -167,10 +167,11 @@ FROM gross_compensations;
 -- 5
 WITH applications_for_vacancy AS (
     SELECT
-        appl.vacancy_id AS vacancy_id,
+        v.id AS vacancy_id,
         COUNT(*) AS n_applications
     FROM job_applications appl
-    GROUP BY appl.vacancy_id
+    INNER JOIN vacancies v ON v.id = appl.vacancy_id
+    GROUP BY v.id
 ),
 employer_applications AS (
     SELECT
@@ -204,7 +205,8 @@ WITH vacancies_and_first_appl AS (
     SELECT
         v.created_at AS vacancy_published,
         MIN(appl.created_at) OVER (PARTITION BY v.id) AS first_appl,
-        a.name AS city_name
+        a.name AS city_name,
+        a.id AS city_id
     FROM job_applications appl
     INNER JOIN vacancies v ON v.id = appl.vacancy_id
     INNER JOIN employers e ON v.employer_id = e.id
@@ -213,6 +215,7 @@ WITH vacancies_and_first_appl AS (
 SELECT
     MIN(first_appl - vacancy_published) AS min_time,
     MAX(first_appl - vacancy_published) AS max_time,
-    city_name
+    city_name,
+    city_id
 FROM vacancies_and_first_appl
-GROUP BY city_name;
+GROUP BY city_id, city_name;
